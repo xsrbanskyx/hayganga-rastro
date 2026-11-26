@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>HayGanga · Overlay OBS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+:root{--pn:#2b1b57;--ac:#ffd23f;--pk:#ff4f8b;--gr:#3ee6c4}
+html,body{margin:0;height:100%;overflow:hidden;font-family:'Press Start 2P',ui-monospace,monospace}
+#cn{position:fixed;top:16px;left:16px;min-width:440px;background:var(--pn);border:6px solid var(--ac);box-shadow:8px 8px 0 var(--pk);padding:16px 22px;color:#fff}
+#cn .l{font-size:14px;color:var(--gr);margin-bottom:12px}
+#v{font-size:50px;color:var(--ac);text-shadow:4px 4px 0 var(--pk);white-space:nowrap}
+#v.pop{animation:pop .6s}
+@keyframes pop{30%{transform:scale(1.15)}}
+#cn .s{font-size:11px;line-height:1.8;margin-top:12px;color:#d9ceff}
+#al{position:fixed;left:50%;bottom:30px;max-width:92%;display:flex;gap:18px;align-items:center;background:#fff;color:#111;border:6px solid #111;box-shadow:8px 8px 0 var(--pk);padding:20px 26px;font-size:22px;line-height:1.6;transform:translate(-50%,160%);opacity:0;transition:transform .4s,opacity .4s}
+#al.in{transform:translate(-50%,0);opacity:1}
+#al i{flex:none;width:38px;height:38px;border-radius:50%;background:var(--ac);border:5px solid #b88a00;box-shadow:inset -5px -5px 0 #e0a800}
+#er{position:fixed;left:8px;bottom:8px;color:#ff5a5a;font-size:11px}
+.hide{display:none!important}
+</style></head><body>
+<div id="cn"><div class="l">RECAUDADO HOY</div><div id="v">0,00 €</div><div class="s" id="sb">Sin rastro activo</div></div>
+<div id="al"><i></i><span id="alT"></span></div>
+<div id="er"></div>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getAuth,signInWithEmailAndPassword} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {getFirestore,collection,query,where,onSnapshot} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+const $=id=>document.getElementById(id),P=new URLSearchParams(location.hash.slice(1));
+const modo=P.get('modo')||'todo';
+if(modo==='contador')$('al').classList.add('hide');
+if(modo==='alertas')$('cn').classList.add('hide');
+if(P.get('fondo'))document.body.style.background='#1a1033';
+const eur=n=>Number(n||0).toFixed(2).replace('.',',')+' €';
+
+/* Contador animado */
+let shown=0,target=0;
+(function tick(){const d=target-shown;shown=Math.abs(d)<.01?target:shown+d*.12;$('v').textContent=eur(shown);requestAnimationFrame(tick)})();
+function setTotal(list,dia){const t=list.reduce((a,c)=>a+(c.precio||0),0),b=list.filter(c=>c.bizum).reduce((a,c)=>a+(c.precio||0),0);
+ if(t>target){$('v').classList.remove('pop');void $('v').offsetWidth;$('v').classList.add('pop')}
+ target=t;$('sb').innerHTML=dia?`${esc(dia.rastro)}<br>${list.length} compra(s) · Bizum cobrado: ${eur(b)}`:'Sin rastro activo'}
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* Alertas de bizum (cola) */
+let ac;const q=[];let busy=false;
+function beep(){if(P.get('sound')==='0')return;try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();ac.resume();
+ [988,1319].forEach((f,i)=>{const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime+i*.11;o.type='square';o.frequency.value=f;g.gain.setValueAtTime(.08,t);g.gain.exponentialRampToValueAtTime(.0001,t+.3);o.connect(g).connect(ac.destination);o.start(t);o.stop(t+.3)})}catch(e){}}
+function next(){const a=q.shift();if(!a){busy=false;return}busy=true;
+ $('alT').textContent=`Apuntada compra de ${a.nick} por ${eur(a.precio)}!`;$('al').classList.add('in');beep();
+ setTimeout(()=>{$('al').classList.remove('in');setTimeout(next,700)},7000)}
+const push=a=>{q.push(a);if(!busy)next()};
+if(P.get('test')){const n=['Marisol','Pepe','Lucia'];let i=0;setInterval(()=>push({nick:n[i%3],precio:12.5+i++*7}),10000);setTimeout(()=>push({nick:'Marisol',precio:12.5}),1500)}
+
+/* Firebase */
+const app=initializeApp({apiKey:"AIzaSyCH-0IDQLEfOAhau6GjQ9K59U--0fI8eCU",authDomain:"hayganga-rastro.firebaseapp.com",projectId:"hayganga-rastro",storageBucket:"hayganga-rastro.firebasestorage.app",messagingSenderId:"50005506287",appId:"1:50005506287:web:2c75ff97cef3d3020d031a"});
+const db=getFirestore(app);
+let unC=null,diaId=null;
+async function go(){
+ try{await signInWithEmailAndPassword(getAuth(app),P.get('u')||'',P.get('p')||'')}
+ catch(e){$('er').textContent='Error de acceso: revisa u= y p= en la URL de OBS';return}
+ onSnapshot(query(collection(db,'dias'),where('fin','==',false)),s=>{
+  const a=s.docs.map(d=>({id:d.id,...d.data()})).sort((x,y)=>x.creado-y.creado),dia=a[0]||null;
+  if(unC){unC();unC=null}
+  if(!dia){diaId=null;setTotal([],null);return}
+  let first=true,prev=new Map();
+  unC=onSnapshot(query(collection(db,'compras'),where('diaId','==',dia.id)),c=>{
+   const list=c.docs.map(d=>({id:d.id,...d.data()}));
+   if(!first)list.forEach(x=>{if(x.bizum&&prev.get(x.id)===false)push(x)});
+   prev=new Map(list.map(x=>[x.id,!!x.bizum]));first=false;setTotal(list,dia)})})}
+go();
+</script></body></html>
