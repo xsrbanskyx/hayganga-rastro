@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>HayGanga · Overlay OBS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--azul:#1264df;--rojo:#e32235}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:transparent;font-family:'Montserrat',Arial,sans-serif}
+
+/* CONTADOR HAYGANGA */
+#cn{position:fixed;top:10px;left:10px;width:max-content;background:rgba(255,255,255,0.70);border:1.5px solid var(--azul);border-radius:12px;box-shadow:0 2px 6px #00000025;padding:10px 15px;color:#151515}
+.contenido{display:flex;align-items:center;gap:12px}
+.icono{width:34px;height:34px;color:var(--azul);flex-shrink:0}
+#cn .l{font-size:11px;font-weight:800;color:var(--azul);letter-spacing:0.3px;margin-bottom:3px;white-space:nowrap}
+#v{font-size:30px;font-weight:800;color:#151515;white-space:nowrap;font-variant-numeric:tabular-nums;transform-origin:left center}
+#cn::after{content:"";display:block;height:3px;margin-top:7px;border-radius:5px;background:linear-gradient(to right,var(--azul) 50%,var(--rojo) 50%)}
+#v.pop{animation:pop .6s}
+@keyframes pop{30%{transform:scale(1.10);color:var(--rojo)}}
+#cn .s{display:none}
+
+/* ALERTAS DE COMPRAS */
+#al{position:fixed;left:50%;bottom:30px;max-width:92%;display:flex;gap:18px;align-items:center;background:rgba(255,255,255,0.92);color:#151515;border:2px solid var(--azul);border-radius:12px;box-shadow:0 3px 8px #00000030;padding:20px 26px;font-size:22px;font-weight:700;line-height:1.6;transform:translate(-50%,160%);opacity:0;transition:transform .4s,opacity .4s}
+#al.in{transform:translate(-50%,0);opacity:1}
+#al i{flex:none;width:38px;height:38px;border-radius:50%;background:var(--azul);border:3px solid var(--rojo)}
+#er{position:fixed;left:8px;bottom:8px;color:#ff5a5a;font-size:11px}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+
+<div id="cn">
+  <div class="contenido">
+    <svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 3h2l2.4 12h12L22 6H6"/>
+      <circle cx="9" cy="20" r="1.5"/>
+      <circle cx="19" cy="20" r="1.5"/>
+    </svg>
+    <div>
+      <div class="l">GASTADO EN EL RASTRO</div>
+      <div id="v">0,00 €</div>
+    </div>
+  </div>
+  <div class="s" id="sb">Sin rastro activo</div>
+</div>
+
+<div id="al"><i></i><span id="alT"></span></div>
+<div id="er"></div>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getAuth,signInWithEmailAndPassword} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {getFirestore,collection,query,where,onSnapshot} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+const $=id=>document.getElementById(id);
+const P=new URLSearchParams(location.hash.slice(1));
+const modo=P.get('modo')||'todo';
+if(modo==='contador')$('al').classList.add('hide');
+if(modo==='alertas')$('cn').classList.add('hide');
+if(P.get('fondo'))document.body.style.background='#1a1033';
+const eur=n=>Number(n||0).toFixed(2).replace('.',',')+' €';
+
+/* CONTADOR ANIMADO */
+let shown=0,target=0;
+(function tick(){
+  const d=target-shown;
+  shown=Math.abs(d)<.01?target:shown+d*.12;
+  $('v').textContent=eur(shown);
+  requestAnimationFrame(tick);
+})();
+
+function setTotal(list,dia){
+  const t=list.reduce((a,c)=>a+Number(c.precio||0),0);
+  const b=list.filter(c=>c.bizum).reduce((a,c)=>a+Number(c.precio||0),0);
+  if(t>target){$('v').classList.remove('pop');void $('v').offsetWidth;$('v').classList.add('pop')}
+  target=t;
+  $('sb').innerHTML=dia?`${esc(dia.rastro)}<br>${list.length} compra(s) · Bizum cobrado: ${eur(b)}`:'Sin rastro activo';
+}
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ALERTAS DE BIZUM */
+let ac;const q=[];let busy=false;
+function beep(){
+  if(P.get('sound')==='0')return;
+  try{
+    ac=ac||new(window.AudioContext||window.webkitAudioContext)();
+    ac.resume();
+    [988,1319].forEach((f,i)=>{
+      const o=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime+i*.11;
+      o.type='square';o.frequency.value=f;
+      g.gain.setValueAtTime(.08,t);g.gain.exponentialRampToValueAtTime(.0001,t+.3);
+      o.connect(g).connect(ac.destination);o.start(t);o.stop(t+.3);
+    });
+  }catch(e){}
+}
+function next(){
+  const a=q.shift();
+  if(!a){busy=false;return}
+  busy=true;
+  $('alT').textContent=`Apuntada compra de ${a.nick} por ${eur(a.precio)}!`;
+  $('al').classList.add('in');
+  beep();
+  setTimeout(()=>{$('al').classList.remove('in');setTimeout(next,700)},7000);
+}
+const push=a=>{if(modo==='contador')return;q.push(a);if(!busy)next()};
+
+/* MODO DE PRUEBA */
+if(P.get('test')){
+  let demoTotal=0;
+  setInterval(()=>{demoTotal+=15;setTotal([{precio:demoTotal}],{rastro:'Prueba'})},5000);
+}
+
+/* FIREBASE ORIGINAL */
+const app=initializeApp({apiKey:"AIzaSyCH-0IDQLEfOAhau6GjQ9K59U--0fI8eCU",authDomain:"hayganga-rastro.firebaseapp.com",projectId:"hayganga-rastro",storageBucket:"hayganga-rastro.firebasestorage.app",messagingSenderId:"50005506287",appId:"1:50005506287:web:2c75ff97cef3d3020d031a"});
+const db=getFirestore(app);
+let unC=null,diaId=null;
+
+async function go(){
+  try{await signInWithEmailAndPassword(getAuth(app),P.get('u')||'',P.get('p')||'')}
+  catch(e){$('er').textContent='Error de acceso: revisa u= y p= en la URL de OBS';return}
+  onSnapshot(query(collection(db,'dias'),where('fin','==',false)),s=>{
+    const a=s.docs.map(d=>({id:d.id,...d.data()})).sort((x,y)=>x.creado-y.creado);
+    const dia=a[0]||null;
+    if(unC){unC();unC=null}
+    if(!dia){diaId=null;setTotal([],null);return}
+    let first=true;let prev=new Map();
+    unC=onSnapshot(query(collection(db,'compras'),where('diaId','==',dia.id)),c=>{
+      const list=c.docs.map(d=>({id:d.id,...d.data()}));
+      if(!first){list.forEach(x=>{if(x.bizum&&prev.get(x.id)===false)push(x)})}
+      prev=new Map(list.map(x=>[x.id,!!x.bizum]));
+      first=false;
+      setTotal(list,dia);
+    });
+  });
+}
+if(!P.get('test'))go();
+</script>
+</body>
+</html>
